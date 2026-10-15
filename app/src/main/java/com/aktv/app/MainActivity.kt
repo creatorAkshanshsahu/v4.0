@@ -45,6 +45,8 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.*
 import coil.load
+import coil.imageLoader
+import coil.request.ImageRequest
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -205,12 +207,21 @@ class MainActivity : AppCompatActivity() {
 
         favs = prefs.getStringSet("favs", emptySet())!!.toSet()
         rowsView.layoutManager = SnapLayoutManager(this, RecyclerView.VERTICAL); rowsView.adapter = rowAdapter
-        rowsView.itemAnimator = null; rowsView.setItemViewCacheSize(8); rowsView.setHasFixedSize(true)
+        rowsView.itemAnimator = null; rowsView.setItemViewCacheSize(6); rowsView.setHasFixedSize(true)
+        (rowsView.layoutManager as LinearLayoutManager).initialPrefetchItemCount = 3
         rowsView.overScrollMode = View.OVER_SCROLL_NEVER
-        rowsView.viewTreeObserver.addOnGlobalFocusChangeListener { _, _ -> dimRows() }
+        rowsView.viewTreeObserver.addOnGlobalFocusChangeListener { old, new ->
+            dimRows()
+            val ni = segs.indexOfFirst { it === new }
+            if (ni >= 0) {
+                val fromSeg = segs.any { it === old }
+                if (fromSeg) switchTab(ni)
+                else if (ni != tab) segs[tab].post { if (segs[ni].isFocused) segs[tab].requestFocus() }   // focus fell onto the bar by accident
+            }
+        }
         rowsView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                if (newState == RecyclerView.SCROLL_STATE_IDLE) aurora.resume() else aurora.pause()
+                if (newState == RecyclerView.SCROLL_STATE_IDLE && tab != 2) aurora.resume() else aurora.pause()
             }
         })
         channelSearch.addTextChangedListener(object : TextWatcher {
@@ -228,7 +239,7 @@ class MainActivity : AppCompatActivity() {
         })
         segs.forEachIndexed { i, tv ->
             tv.setOnClickListener { switchTab(i) }
-            tv.setOnFocusChangeListener { _, f -> if (f) switchTab(i); styleSegs() }
+            tv.setOnFocusChangeListener { _, _ -> styleSegs() }
         }
         segLive.post { moveIndicator(false) }
         styleSegs(); fillHero(null); loadChannels()
@@ -240,6 +251,8 @@ class MainActivity : AppCompatActivity() {
             home.animate().alpha(1f).translationY(0f).setDuration(650).setInterpolator(DecelerateInterpolator(2f)).start()
         }
         intro.onDone = { intro.visibility = View.GONE; rowsView.requestFocus() }
+        Movies.diskDir = cacheDir
+        ui.postDelayed({ loadMovies() }, 1500)   // warm up the Movies tab in the background
         intro.start()
     }
 
@@ -319,6 +332,13 @@ class MainActivity : AppCompatActivity() {
                 if (t.alpha != a) t.animate().alpha(a).setDuration(220).start()
             }
         }
+    }
+    private fun focusRowAt(pos: Int) {
+        val holder = rowsView.findViewHolderForAdapterPosition(pos) ?: return
+        val rv = holder.itemView.findViewById<RecyclerView>(R.id.rowList) ?: return
+        val lm = rv.layoutManager as? LinearLayoutManager ?: return
+        val first = lm.findFirstCompletelyVisibleItemPosition().coerceAtLeast(0)
+        (lm.findViewByPosition(first) ?: rv.getChildAt(0))?.requestFocus()
     }
     private fun isInside(v: View, parent: View): Boolean {
         var p: ViewParent? = v.parent
@@ -470,22 +490,46 @@ class MainActivity : AppCompatActivity() {
         val l = Movies.recent(prefs).map { Tile.Mv(it) }
         return if (l.isEmpty()) emptyList() else listOf(Row(CONTINUE, l))
     }
-    /** Loads every movie / series shelf at once, then shows them together. */
+    /** Loads movie / series shelves in parallel and shows each one the moment it (and those above it) are ready. */
     private fun loadMovies() {
         if (moviesLoading || movieRows.isNotEmpty()) return
         moviesLoading = true; updateStatus()
         Thread {
-            val res = arrayOfNulls<Row>(Movies.SHELVES.size)
-            val pool = Executors.newFixedThreadPool(6)
+            val n = Movies.SHELVES.size
+            val res = arrayOfNulls<Row>(n); val done = BooleanArray(n)
+            val pool = Executors.newFixedThreadPool(8)
+            var published = 0
+            val publish = {
+                runOnUiThread {
+                    synchronized(res) {
+                        var k = published
+                        while (k < n && done[k]) k++
+                        if (k > published) {
+                            published = k
+                            val fresh = res.take(k).filterNotNull()
+                            val before = movieRows.size; movieRows = fresh
+                            if (tab == 2) {
+                                if (before == 0) { refreshRows(); if (segs.none { it.isFocused } && !searchShown) rowsView.requestFocus() }
+                                else {
+                                    val base = continueRow().size
+                                    rows = continueRow() + movieRows
+                                    if (fresh.size > before) rowAdapter.notifyItemRangeInserted(base + before, fresh.size - before)
+                                }
+                            }
+                            updateStatus()
+                        }
+                    }
+                }
+            }
             Movies.SHELVES.forEachIndexed { i, sh ->
-                pool.execute { try { val l = Movies.shelf(sh); if (l.isNotEmpty()) res[i] = Row(sh.title, l.map { Tile.Mv(it) }) } catch (_: Exception) {} }
+                pool.execute {
+                    try { val l = Movies.shelf(sh); if (l.isNotEmpty()) synchronized(res) { res[i] = Row(sh.title, l.map { Tile.Mv(it) }) } } catch (_: Exception) {}
+                    synchronized(res) { done[i] = true }
+                    publish()
+                }
             }
             pool.shutdown(); pool.awaitTermination(40, java.util.concurrent.TimeUnit.SECONDS)
-            runOnUiThread {
-                moviesLoading = false; movieRows = res.filterNotNull()
-                if (tab == 2) { refreshRows(); if (currentFocus == null || segs.none { it.isFocused }) rowsView.requestFocus() }
-                updateStatus()
-            }
+            runOnUiThread { moviesLoading = false; updateStatus() }
         }.start()
     }
 
@@ -532,6 +576,10 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- hero ----------
     private val heroRunnable = Runnable { applyHero(heroTile) }
+    private fun prefetch(url: String) {
+        if (url.isEmpty()) return
+        imageLoader.enqueue(ImageRequest.Builder(this).data(url).build())
+    }
     private fun setHero(t: Tile?, immediate: Boolean = false) {
         heroTile = t; ui.removeCallbacks(heroRunnable)
         if (immediate) fillHero(t) else ui.postDelayed(heroRunnable, 130)   // debounce fast scrolling
@@ -554,13 +602,13 @@ class MainActivity : AppCompatActivity() {
         if (url.isNullOrEmpty()) { heroBackdrop.animate().alpha(0f).setDuration(350).start(); heroOrb.animate().alpha(1f).setDuration(250).start(); return }
         heroOrb.animate().alpha(0f).setDuration(200).start()
         heroBackdrop.load(url) {
-            crossfade(250)
-            listener(onSuccess = { _, _ -> if ((heroTile as? Tile.Mv)?.m?.background == url) heroBackdrop.animate().alpha(0.55f).setDuration(450).start() })
+            crossfade(180)
+            listener(onSuccess = { _, _ -> if ((heroTile as? Tile.Mv)?.m?.background == url) heroBackdrop.animate().alpha(0.9f).setDuration(260).start() })
         }
     }
     private fun fillHero(t: Tile?) {
         heroChips.removeAllViews()
-        if (t !is Tile.Mv) showBackdrop(null)
+        if (t !is Tile.Mv) { showBackdrop(null); if (layer.visibility != View.VISIBLE) aurora.resume() }
         schedulePreview((t as? Tile.Ch)?.c)
         when (t) {
             is Tile.Ch -> {
@@ -596,7 +644,8 @@ class MainActivity : AppCompatActivity() {
                 heroProg.visibility = View.GONE; heroProgress.visibility = View.GONE; heroNext.visibility = View.GONE
                 heroDesc.text = t.m.description; heroDesc.visibility = if (t.m.description.isEmpty()) View.GONE else View.VISIBLE
                 ui.removeCallbacks(heroGuideRunnable)
-                glowHero(red, 0xFF5A0A12.toInt()); showBackdrop(t.m.background)
+                glowHero(red, 0xFF5A0A12.toInt()); showBackdrop(t.m.background.ifEmpty { t.m.poster })
+                aurora.pause()
             }
             else -> {
                 heroDot.visibility = View.GONE; heroBadge.text = ""; heroTitle.text = "AK TV"
@@ -1097,6 +1146,21 @@ class MainActivity : AppCompatActivity() {
             KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_DPAD_LEFT -> { switchEngine(); return true }
         }
         if (layer.visibility != View.VISIBLE && e.action == KeyEvent.ACTION_DOWN && e.keyCode == KeyEvent.KEYCODE_SEARCH) { openSearch(); return true }
+        if (layer.visibility != View.VISIBLE && e.action == KeyEvent.ACTION_DOWN && e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            val f = currentFocus
+            if (f != null && isInside(f, rowsView)) {
+                val next = FocusFinder.getInstance().findNextFocus(window.decorView as ViewGroup, f, View.FOCUS_DOWN)
+                if (next == null || !isInside(next, rowsView)) {
+                    val rowView = rowsView.findContainingItemView(f)
+                    val pos = rowView?.let { rowsView.getChildAdapterPosition(it) } ?: -1
+                    if (pos >= 0 && pos + 1 < rows.size) {
+                        rowsView.scrollToPosition(pos + 1)
+                        rowsView.post { focusRowAt(pos + 1) }
+                    }
+                    return true   // never jump to another tab or the top bar
+                }
+            }
+        }
         // Going up out of the rows always lands on the current tab, never switches tabs by accident.
         if (layer.visibility != View.VISIBLE && e.action == KeyEvent.ACTION_DOWN && e.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
             val f = currentFocus
@@ -1158,17 +1222,55 @@ class MainActivity : AppCompatActivity() {
         return (all + allV2).filter { c -> val hay = (c.name + " " + c.category).lowercase(); toks.all { hay.contains(it) } }
             .sortedWith(compareBy({ score(it) }, { it.v2 }, { it.name.lowercase() })).take(120)
     }
-    private fun updateResults() {
-        val q = searchBuf.toString().trim()
-        results = if (q.isEmpty()) emptyList() else runSearch(q)
-        searchAdapter.notifyDataSetChanged(); searchResults.scrollToPosition(0)
-        searchCount.text = if (q.isEmpty()) "Search ${all.size + allV2.size} channels" else "${results.size} result" + if (results.size == 1) "" else "s"
+    private var movieResults = listOf<Tile>(); private var movieSearchToken = 0; private var movieSearching = false
+    private val movieRow = Row("Movies & series", emptyList())
+    private val movieSearchAdapter by lazy { TileAdapter(movieRow) }
+    private val movieSearchList by lazy {
+        RecyclerView(this).apply {
+            layoutManager = SnapLayoutManager(this@MainActivity, RecyclerView.HORIZONTAL)
+            adapter = movieSearchAdapter; itemAnimator = null; overScrollMode = View.OVER_SCROLL_NEVER
+            clipChildren = false; clipToPadding = false; visibility = View.GONE
+            setPadding((4 * dp).toInt(), (10 * dp).toInt(), (80 * dp).toInt(), (16 * dp).toInt())
+            val parent = searchResults.parent as ViewGroup
+            parent.addView(this, parent.indexOfChild(searchResults), LinearLayout.LayoutParams(-1, -2))
+        }
+    }
+    private val movieSearchRunnable = Runnable {
+        val q = searchBuf.toString().trim(); val tok = ++movieSearchToken
+        Thread {
+            val r = try { Movies.search(q).filter { it.poster.isNotEmpty() }.distinctBy { it.imdb }.take(40) } catch (_: Exception) { emptyList() }
+            runOnUiThread {
+                if (tok != movieSearchToken || !searchShown) return@runOnUiThread
+                movieSearching = false
+                movieResults = r.map { Tile.Mv(it) }; movieRow.tiles = movieResults
+                movieSearchAdapter.notifyDataSetChanged(); movieSearchList.scrollToPosition(0)
+                movieSearchList.visibility = if (movieResults.isEmpty()) View.GONE else View.VISIBLE
+                renderCounts(q)
+            }
+        }.start()
+    }
+    private fun renderCounts(q: String) {
+        val m = movieResults.size
+        searchCount.text = if (q.isEmpty()) "Search ${all.size + allV2.size} channels, movies & series"
+            else "${results.size} channel" + (if (results.size == 1) "" else "s") + "  ·  $m movie" + (if (m == 1) "" else "s") + " & series"
         searchEmpty.text = when {
-            q.isEmpty() -> "Type a channel name, like Star Sports, Sony or Zee."
-            results.isEmpty() -> "No channels match \"$q\"."
+            q.isEmpty() -> "Type a channel, movie or series name, like Star Sports, Inception or Friends."
+            results.isEmpty() && m == 0 -> if (movieSearching) "Searching for \"$q\"…" else "Nothing matches \"$q\"."
             else -> ""
         }
         searchEmpty.visibility = if (searchEmpty.text.isEmpty()) View.GONE else View.VISIBLE
+    }
+    private fun updateResults() {
+        val q0 = searchBuf.toString().trim()
+        ui.removeCallbacks(movieSearchRunnable); movieSearchToken++
+        movieResults = emptyList(); movieRow.tiles = movieResults; movieSearchAdapter.notifyDataSetChanged()
+        movieSearchList.visibility = View.GONE
+        movieSearching = q0.length >= 2
+        if (movieSearching) ui.postDelayed(movieSearchRunnable, 350)
+        val q = q0
+        results = if (q.isEmpty()) emptyList() else runSearch(q)
+        searchAdapter.notifyDataSetChanged(); searchResults.scrollToPosition(0)
+        renderCounts(q)
     }
     private fun openSearch() {
         if (searchShown || layer.visibility == View.VISIBLE || intro.visibility == View.VISIBLE) return
@@ -1552,10 +1654,17 @@ class MainActivity : AppCompatActivity() {
                 is Tile.Mv -> {
                     val img = v.findViewById<ImageView>(R.id.poster)
                     v.findViewById<TextView>(R.id.posterName).text = t.m.name
-                    img.setImageDrawable(null); img.load(t.m.poster) { crossfade(200) }
+                    img.load(t.m.poster) { crossfade(120); size(300, 450); placeholder(null) }
                     val rt = v.findViewById<TextView>(R.id.posterRating)
                     rt.text = if (t.m.rating.isNotEmpty()) "★ ${t.m.rating}" else ""; rt.visibility = if (t.m.rating.isEmpty()) View.GONE else View.VISIBLE
-                    v.setOnFocusChangeListener { x, f -> focusAnim(x, f, 0xFFE50914.toInt()); if (f) setHero(t) }
+                    v.setOnFocusChangeListener { x, f ->
+                        focusAnim(x, f, 0xFFE50914.toInt())
+                        if (f) {
+                            setHero(t)
+                            val p = h.bindingAdapterPosition
+                            for (d in 1..3) (row.tiles.getOrNull(p + d) as? Tile.Mv)?.let { prefetch(it.m.background) }
+                        }
+                    }
                     v.setOnClickListener {
                         stopPreview(); DetailActivity.open(this@MainActivity, t.m)
                         overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
@@ -1566,6 +1675,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val tilePool = RecyclerView.RecycledViewPool().apply { setMaxRecycledViews(0, 40); setMaxRecycledViews(1, 40) }
     private val rowAdapter = object : RecyclerView.Adapter<VH>() {
         override fun getItemCount() = rows.size
         override fun onCreateViewHolder(p: ViewGroup, t: Int) =
@@ -1587,7 +1697,10 @@ class MainActivity : AppCompatActivity() {
                 rv.setItemViewCacheSize(10)
                 (rv.layoutManager as LinearLayoutManager).initialPrefetchItemCount = 8
             }
-            val ad = TileAdapter(row); inner[i] = ad; rv.adapter = ad
+            rv.setRecycledViewPool(tilePool)
+            val cur = rv.adapter as? TileAdapter
+            val ad = if (cur != null && cur.row === row) cur else TileAdapter(row).also { rv.swapAdapter(it, true) }
+            inner[i] = ad
             v.animate().cancel(); v.translationY = 0f; v.alpha = 1f
             val a = if (rowsView.hasFocus()) 0.45f else 1f
             title.alpha = a; count.alpha = a

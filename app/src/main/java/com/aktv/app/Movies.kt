@@ -40,6 +40,8 @@ object Movies {
         "$PLAYER/tv/$tmdb/$s/$e?color=$ACCENT&back=false&autoplayNextEp=true" + (if (t > 5) "&t=$t" else "")
 
     private val cache = HashMap<String, List<Title>>()
+    /** Set by the app: shelves are kept on disk so the Movies tab opens instantly on the next launch. */
+    @Volatile var diskDir: java.io.File? = null
 
     private fun http(u: String): String {
         var last: Exception? = null
@@ -74,9 +76,14 @@ object Movies {
     /** One shelf of titles (cached for the session). Titles without a TMDB id can't play, so they are left out. */
     fun shelf(sh: Shelf): List<Title> {
         val key = "${sh.type}/${sh.catalog}/${sh.genre}"
-        cache[key]?.let { return it }
+        synchronized(cache) { cache[key] }?.let { return it }
         val extra = if (sh.genre != null) "/" + URLEncoder.encode("genre=${sh.genre}", "UTF-8").replace("+", "%20") else ""
-        val arr = JSONObject(http("$CAT/catalog/${sh.type}/${sh.catalog}$extra.json")).optJSONArray("metas") ?: return emptyList()
+        val f = diskDir?.let { java.io.File(it, "shelf_" + key.replace(Regex("[^A-Za-z0-9]"), "_") + ".json") }
+        val fresh = f != null && f.exists() && System.currentTimeMillis() - f.lastModified() < 12 * 3600_000L
+        val body = if (fresh) f!!.readText() else try {
+            http("$CAT/catalog/${sh.type}/${sh.catalog}$extra.json").also { b -> try { f?.writeText(b) } catch (_: Exception) {} }
+        } catch (e: Exception) { if (f != null && f.exists()) f.readText() else throw e }   // offline: use the older copy
+        val arr = JSONObject(body).optJSONArray("metas") ?: return emptyList()
         val out = (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let { o -> parse(o, sh.type) } }
             .filter { it.tmdb > 0 && it.poster.isNotEmpty() }.distinctBy { it.imdb }
         synchronized(cache) { cache[key] = out }
