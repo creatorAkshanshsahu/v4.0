@@ -111,6 +111,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var segLive: TextView; private lateinit var segV2: TextView; private lateinit var segSites: TextView
     private val segs by lazy { listOf(segLive, segV2, segSites) }
     private lateinit var segIndicator: View; private val segPill = GradientDrawable()
+    // left side rail (Google TV style): icons only, expands with labels while it holds focus
+    private lateinit var rail: View; private lateinit var railScrim: View
+    private var railF = 0f; private var railTarget = 0f; private var railAnim: ValueAnimator? = null
+    private var lastRowsFocus: View? = null
+    private val railCheck = Runnable { applyRail() }
     private lateinit var searchBtn: TextView; private lateinit var intro: AkIntroView
     private lateinit var aurora: AuroraView
     private lateinit var heroText: View; private lateinit var heroDot: View; private lateinit var heroBadge: TextView
@@ -146,6 +151,7 @@ class MainActivity : AppCompatActivity() {
         layer = findViewById(R.id.playerLayer); pv = findViewById(R.id.playerView); spinner = findViewById(R.id.spinner)
         segLive = findViewById(R.id.segLive); segV2 = findViewById(R.id.segV2); segSites = findViewById(R.id.segSites)
         segIndicator = findViewById(R.id.segIndicator); searchBtn = findViewById(R.id.searchBtn)
+        rail = findViewById(R.id.rail); railScrim = findViewById(R.id.railScrim)
         aurora = findViewById(R.id.aurora)
         heroText = findViewById(R.id.heroText); heroDot = findViewById(R.id.heroDot); heroBadge = findViewById(R.id.heroBadge)
         heroTitle = findViewById(R.id.heroTitle); heroChips = findViewById(R.id.heroChips)
@@ -165,7 +171,6 @@ class MainActivity : AppCompatActivity() {
         heroPreview.elevation = 18 * dp
 
         // glass surfaces
-        findViewById<View>(R.id.segTrack).background = GlassDrawable(dp).apply { base = Color.argb(28, 255, 255, 255) }
         segPill.cornerRadius = 40 * dp; segIndicator.background = segPill
         heroOrb.background = orbGlass; heroOrb.outlineAmbientShadowColor = Accent.SIGNAL; heroOrb.outlineSpotShadowColor = Accent.SIGNAL
         heroOrb.elevation = 18 * dp
@@ -179,13 +184,13 @@ class MainActivity : AppCompatActivity() {
         heroProgress.progressBackgroundTintList = track; infoProgress.progressBackgroundTintList = track
 
         // search button + compact top bar for small screens
-        val sbGlass = GlassDrawable(dp).apply { base = Color.argb(28, 255, 255, 255) }
-        searchBtn.background = sbGlass
-        searchBtn.setOnFocusChangeListener { v, f ->
-            sbGlass.focused = f
-            searchBtn.setTextColor(if (f) Accent.TEXT else Accent.DIM)
-            searchBtn.compoundDrawableTintList = ColorStateList.valueOf(if (f) Accent.TEXT else Accent.DIM)
-            focusAnim(v, f, Accent.SIGNAL)
+        val sbPill = GradientDrawable().apply { cornerRadius = 40 * dp; setColor(Color.TRANSPARENT) }
+        searchBtn.background = sbPill
+        searchBtn.setOnFocusChangeListener { _, f ->
+            sbPill.setColor(if (f) Color.WHITE else Color.TRANSPARENT)
+            searchBtn.setTextColor(if (f) Accent.ABYSS else Accent.DIM)
+            searchBtn.compoundDrawableTintList = ColorStateList.valueOf(if (f) Accent.ABYSS else Accent.DIM)
+            styleSegs()
         }
         searchBtn.setOnClickListener { openSearch() }
         fitTopBar()
@@ -212,9 +217,10 @@ class MainActivity : AppCompatActivity() {
         rowsView.overScrollMode = View.OVER_SCROLL_NEVER
         rowsView.viewTreeObserver.addOnGlobalFocusChangeListener { old, new ->
             dimRows()
+            if (new != null && isInside(new, rowsView)) lastRowsFocus = new
             val ni = segs.indexOfFirst { it === new }
             if (ni >= 0) {
-                val fromSeg = segs.any { it === old }
+                val fromSeg = segs.any { it === old } || old === searchBtn
                 if (fromSeg) switchTab(ni)
                 else if (ni != tab) segs[tab].post { if (segs[ni].isFocused) segs[tab].requestFocus() }   // focus fell onto the bar by accident
             }
@@ -272,49 +278,61 @@ class MainActivity : AppCompatActivity() {
         layoutParams = LinearLayout.LayoutParams(-2, -2).apply { marginEnd = (10 * dp).toInt() }
     }
 
-    /** Small screens: drop the "AK TV" word, then the Search label, then shorten the tabs, so the top bar never collides. */
+    /** The side rail is icon-only until it gets focus, so it fits every screen; just drop the logo word on very short screens. */
     private fun fitTopBar() {
-        val w = resources.configuration.screenWidthDp
-        if (w < 900) findViewById<View>(R.id.akText).visibility = View.GONE
-        if (w < 760) {
-            searchBtn.text = ""; searchBtn.compoundDrawablePadding = 0
-            searchBtn.setPadding((14 * dp).toInt(), (8 * dp).toInt(), (14 * dp).toInt(), (8 * dp).toInt())
-        }
-        if (w < 700) {
-            segV2.text = "V2"; segSites.text = "Movies"
-            segs.forEach { it.setPadding((14 * dp).toInt(), it.paddingTop, (14 * dp).toInt(), it.paddingBottom) }
-        }
+        if (resources.configuration.screenHeightDp < 400) findViewById<View>(R.id.akText).visibility = View.GONE
     }
 
     private fun styleSegs() {
         val segFocused = segs.any { it.isFocused }
         segPill.setColor(if (segFocused) Color.WHITE else Color.argb(40, 255, 255, 255))
         segs.forEachIndexed { i, tv ->
-            tv.setTextColor(when { tv.isFocused -> Accent.ABYSS; tab == i -> Accent.TEXT; else -> Accent.DIM })
+            val c = when { tv.isFocused -> Accent.ABYSS; tab == i -> Accent.TEXT; else -> Accent.DIM }
+            tv.setTextColor(c); tv.compoundDrawableTintList = ColorStateList.valueOf(c)
+        }
+        // evaluated after the focus change settles, so moving between rail items never collapses and re-opens it
+        ui.removeCallbacks(railCheck); ui.post(railCheck)
+    }
+    private fun indicatorW() = ((56 + (204 - 56) * railF) * dp).toInt()
+    /** Opens the rail while any of its items has focus, and closes it when focus moves into the content. */
+    private fun applyRail() {
+        val want = if (searchBtn.isFocused || segs.any { it.isFocused }) 1f else 0f
+        if (want == railTarget) return
+        railTarget = want
+        railAnim?.cancel()
+        railAnim = ValueAnimator.ofFloat(railF, want).apply {
+            duration = 260; interpolator = DecelerateInterpolator(2f)
+            addUpdateListener {
+                railF = it.animatedValue as Float
+                val rl = rail.layoutParams; rl.width = ((84 + (232 - 84) * railF) * dp).toInt(); rail.layoutParams = rl
+                railScrim.alpha = railF
+                val il = segIndicator.layoutParams; il.width = indicatorW(); segIndicator.layoutParams = il
+            }
+            start()
         }
     }
-    /** The selected-tab pill slides between tabs. */
+    /** The selected-tab pill slides up and down the rail. */
     private fun moveIndicator(animate: Boolean) {
         val target = segs[tab]
-        if (target.width == 0) { target.post { moveIndicator(false) }; return }
+        if (target.height == 0) { target.post { moveIndicator(false) }; return }
         val lp = segIndicator.layoutParams
-        val x0 = segIndicator.translationX; val w0 = lp.width
-        val x1 = target.left.toFloat(); val w1 = target.width
-        if (!animate || w0 <= 0) { segIndicator.translationX = x1; lp.width = w1; segIndicator.layoutParams = lp; return }
+        val y0 = segIndicator.translationY; val h0 = lp.height
+        val y1 = target.top.toFloat(); val h1 = target.height
+        segIndicator.translationX = target.left.toFloat()
+        lp.width = indicatorW()
+        if (!animate || h0 <= 0 || h0 != h1) { segIndicator.translationY = y1; lp.height = h1; segIndicator.layoutParams = lp; return }
+        segIndicator.layoutParams = lp
         ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 340; interpolator = OvershootInterpolator(0.9f)
-            addUpdateListener {
-                val f = it.animatedValue as Float
-                segIndicator.translationX = x0 + (x1 - x0) * f
-                lp.width = (w0 + (w1 - w0) * f).toInt(); segIndicator.layoutParams = lp
-            }
+            duration = 300; interpolator = DecelerateInterpolator(2f)
+            addUpdateListener { segIndicator.translationY = y0 + (y1 - y0) * (it.animatedValue as Float) }
             start()
         }
     }
 
     private fun focusAnim(x: View, f: Boolean, color: Int) {
         x.outlineAmbientShadowColor = color; x.outlineSpotShadowColor = color
-        val s = if (f) 1.1f else 1f
+        val s = if (f) 1.06f else 1f
+        x.animate().cancel()
         x.animate().setStartDelay(0).scaleX(s).scaleY(s).translationZ(if (f) 24 * dp else 0f)
             .setDuration(240).setInterpolator(DecelerateInterpolator(2f)).start()
     }
@@ -509,7 +527,7 @@ class MainActivity : AppCompatActivity() {
                             val fresh = res.take(k).filterNotNull()
                             val before = movieRows.size; movieRows = fresh
                             if (tab == 2) {
-                                if (before == 0) { refreshRows(); if (segs.none { it.isFocused } && !searchShown) rowsView.requestFocus() }
+                                if (before == 0) { refreshRows(); if (segs.none { it.isFocused } && !searchBtn.isFocused && !searchShown) rowsView.requestFocus() }
                                 else {
                                     val base = continueRow().size
                                     rows = continueRow() + movieRows
@@ -566,11 +584,12 @@ class MainActivity : AppCompatActivity() {
         if (t == tab) return
         val dir = if (t > tab) 1 else -1
         tab = t; styleSegs(); moveIndicator(true); stopPreview()
-        val shift = 48 * dp * dir
-        rowsView.animate().alpha(0f).translationX(-shift).setDuration(150).withEndAction {
+        val shift = 28 * dp * dir
+        rowsView.animate().cancel()
+        rowsView.animate().alpha(0f).translationY(-shift).setDuration(150).withEndAction {
             refreshRows(); rowsView.scrollToPosition(0)
-            rowsView.translationX = shift
-            rowsView.animate().alpha(1f).translationX(0f).setDuration(260).setInterpolator(DecelerateInterpolator(1.5f)).start()
+            rowsView.translationY = shift
+            rowsView.animate().alpha(1f).translationY(0f).setDuration(280).setInterpolator(DecelerateInterpolator(1.8f)).start()
         }.start()
     }
 
@@ -1172,12 +1191,27 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        // Going up out of the rows always lands on the current tab, never switches tabs by accident.
-        if (layer.visibility != View.VISIBLE && e.action == KeyEvent.ACTION_DOWN && e.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+        // Going left out of the rows always lands on the current tab in the side rail, never switches tabs by accident.
+        if (layer.visibility != View.VISIBLE && e.action == KeyEvent.ACTION_DOWN && e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
             val f = currentFocus
             if (f != null && isInside(f, rowsView)) {
-                val next = FocusFinder.getInstance().findNextFocus(window.decorView as ViewGroup, f, View.FOCUS_UP)
-                if (next != null && segs.any { it === next }) { segs[tab].requestFocus(); return true }
+                val next = FocusFinder.getInstance().findNextFocus(window.decorView as ViewGroup, f, View.FOCUS_LEFT)
+                if (next != null && (next === searchBtn || segs.any { it === next })) { segs[tab].requestFocus(); return true }
+            }
+        }
+        if (layer.visibility != View.VISIBLE && e.action == KeyEvent.ACTION_DOWN) {
+            val f = currentFocus
+            val inRail = f != null && (f === searchBtn || segs.any { it === f })
+            if (inRail && e.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                // back to the tile you came from
+                val back = lastRowsFocus
+                if (back != null && back.isAttachedToWindow && isInside(back, rowsView) && back.requestFocus()) return true
+                if (rowsView.requestFocus()) return true
+            }
+            if (f != null && inRail && (e.keyCode == KeyEvent.KEYCODE_DPAD_UP || e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN)) {
+                val dir = if (e.keyCode == KeyEvent.KEYCODE_DPAD_UP) View.FOCUS_UP else View.FOCUS_DOWN
+                val next = FocusFinder.getInstance().findNextFocus(window.decorView as ViewGroup, f, dir)
+                if (next == null || !(next === searchBtn || segs.any { it === next })) return true   // stay inside the rail
             }
         }
         return super.dispatchKeyEvent(e)
