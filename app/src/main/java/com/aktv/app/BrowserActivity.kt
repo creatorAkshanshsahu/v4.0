@@ -88,7 +88,7 @@ class BrowserActivity : Activity() {
             text = controlsHint(); textSize = 13f; setTextColor(Accent.DIM)
             typeface = ResourcesCompat.getFont(this@BrowserActivity, R.font.sora_regular)
             setPadding((22 * dp).toInt(), (11 * dp).toInt(), (22 * dp).toInt(), (11 * dp).toInt())
-            background = GlassDrawable(dp).apply { base = Color.argb(170, 12, 14, 32) }
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 20 * dp; setColor(Color.argb(210, 30, 32, 38)) }
         }
         root.addView(geckoView, FrameLayout.LayoutParams(-1, -1))
         root.addView(bar, FrameLayout.LayoutParams(-1, (3 * dp).toInt(), Gravity.TOP))

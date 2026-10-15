@@ -75,7 +75,7 @@ class MainActivity : AppCompatActivity() {
     // movie & series shelves (filled the first time the tab opens)
     private var movieRows = listOf<Row>(); private var moviesLoading = false
     private val RECENT = "Recently watched"; private val CONTINUE = "Continue watching"
-    private lateinit var heroBackdrop: ImageView; private lateinit var heroPreview: View; private lateinit var previewTex: TextureView
+    private lateinit var heroBackdrop: ImageView; private lateinit var heroPreview: View; private lateinit var previewPv: PlayerView
     private var previewPlayer: ExoPlayer? = null; private var previewToken = 0
     // ➜ CHANNEL UPDATE LINKS: the app re-reads both lists from here every launch
     private val SITE = "https://livetgtv.lovable.app"
@@ -110,20 +110,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var layer: View; private lateinit var pv: PlayerView; private lateinit var spinner: ProgressBar
     private lateinit var segLive: TextView; private lateinit var segV2: TextView; private lateinit var segSites: TextView
     private val segs by lazy { listOf(segLive, segV2, segSites) }
-    private lateinit var segIndicator: View; private val segPill = GradientDrawable()
-    // left side rail (Google TV style): icons only, expands with labels while it holds focus
-    private lateinit var rail: View; private lateinit var railScrim: View
-    private var railF = 0f; private var railTarget = 0f; private var railAnim: ValueAnimator? = null
+    // top navigation (Google TV style): flat pills, white while focused, grey for the open tab
+    private val segBgs by lazy { List(3) { Ui.pill(dp, Color.TRANSPARENT) } }
     private var lastRowsFocus: View? = null
-    private val railCheck = Runnable { applyRail() }
+    private val compact by lazy { resources.configuration.screenHeightDp < 420 }
     private lateinit var searchBtn: TextView; private lateinit var intro: AkIntroView
-    private lateinit var aurora: AuroraView
     private lateinit var heroText: View; private lateinit var heroDot: View; private lateinit var heroBadge: TextView
     private lateinit var heroTitle: TextView; private lateinit var heroChips: LinearLayout
     private lateinit var heroOrb: View; private lateinit var heroLogo: ImageView; private lateinit var heroMono: TextView
     private lateinit var heroProg: TextView; private lateinit var heroProgress: ProgressBar
     private lateinit var heroDesc: TextView; private lateinit var heroNext: TextView
-    private val orbGlass by lazy { GlassDrawable(dp) }
+    private val orbBg by lazy { GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Accent.ABYSS, Accent.ABYSS)) }
     private lateinit var infoCard: View; private lateinit var infoLogo: ImageView; private lateinit var infoName: TextView
     private lateinit var infoCat: TextView; private lateinit var playerScrim: View; private lateinit var playerClock: View
     private lateinit var infoMono: TextView; private lateinit var infoNow: TextView; private lateinit var infoProgress: ProgressBar
@@ -137,8 +134,6 @@ class MainActivity : AppCompatActivity() {
     private var guideShown = false; private var shownCat = ""
     private var guideCats = listOf<String>(); private var catCounts = mapOf<String, Int>()
     private var guideCat = ""; private var guideChannels = listOf<Channel>(); private var categoryChannels = listOf<Channel>()
-    private val infoGlass by lazy { GlassDrawable(dp, 24f).apply { base = Color.argb(150, 12, 14, 32) } }
-    private val guideGlass by lazy { GlassDrawable(dp, 28f).apply { base = Color.argb(185, 10, 12, 28) } }
     // search
     private lateinit var searchLayer: View; private lateinit var searchQuery: TextView; private lateinit var searchKeys: LinearLayout
     private lateinit var searchResults: RecyclerView; private lateinit var searchCount: TextView; private lateinit var searchEmpty: TextView
@@ -150,9 +145,7 @@ class MainActivity : AppCompatActivity() {
         rowsView = findViewById(R.id.rows); status = findViewById(R.id.status)
         layer = findViewById(R.id.playerLayer); pv = findViewById(R.id.playerView); spinner = findViewById(R.id.spinner)
         segLive = findViewById(R.id.segLive); segV2 = findViewById(R.id.segV2); segSites = findViewById(R.id.segSites)
-        segIndicator = findViewById(R.id.segIndicator); searchBtn = findViewById(R.id.searchBtn)
-        rail = findViewById(R.id.rail); railScrim = findViewById(R.id.railScrim)
-        aurora = findViewById(R.id.aurora)
+        searchBtn = findViewById(R.id.searchBtn)
         heroText = findViewById(R.id.heroText); heroDot = findViewById(R.id.heroDot); heroBadge = findViewById(R.id.heroBadge)
         heroTitle = findViewById(R.id.heroTitle); heroChips = findViewById(R.id.heroChips)
         heroOrb = findViewById(R.id.heroOrb); heroLogo = findViewById(R.id.heroLogo); heroMono = findViewById(R.id.heroMono)
@@ -165,17 +158,13 @@ class MainActivity : AppCompatActivity() {
         searchLayer = findViewById(R.id.searchLayer); searchQuery = findViewById(R.id.searchQuery); searchKeys = findViewById(R.id.searchKeys)
         searchResults = findViewById(R.id.searchResults); searchCount = findViewById(R.id.searchCount); searchEmpty = findViewById(R.id.searchEmpty)
         intro = findViewById(R.id.splash)
-        heroBackdrop = findViewById(R.id.heroBackdrop); heroPreview = findViewById(R.id.heroPreview); previewTex = findViewById(R.id.heroPreviewTex)
-        heroPreview.clipToOutline = true
-        heroPreview.background = GradientDrawable().apply { cornerRadius = 18 * dp; setColor(Color.BLACK) }
-        heroPreview.elevation = 18 * dp
+        heroBackdrop = findViewById(R.id.heroBackdrop); heroPreview = findViewById(R.id.heroPreview); previewPv = findViewById(R.id.heroPreviewPv)
 
-        // glass surfaces
-        segPill.cornerRadius = 40 * dp; segIndicator.background = segPill
-        heroOrb.background = orbGlass; heroOrb.outlineAmbientShadowColor = Accent.SIGNAL; heroOrb.outlineSpotShadowColor = Accent.SIGNAL
-        heroOrb.elevation = 18 * dp
-        infoCard.background = infoGlass
-        findViewById<View>(R.id.infoLogoBox).background = GlassDrawable(dp, 16f)
+        // flat surfaces (no glass: it made the UI laggy)
+        layoutHero()
+        segs.forEachIndexed { i, tv -> tv.background = segBgs[i] }
+        heroOrb.background = orbBg
+        findViewById<View>(R.id.infoLogoBox).background = Ui.pill(dp, Accent.SURFACE, 16f)
         findViewById<TextView>(R.id.infoHint).text = SpannableStringBuilder().apply {
             key(this, "▲ ▼", "Channel"); append("     "); key(this, "▶", "All channels"); append("     ")
             key(this, "Hold OK", "Reload"); append("     "); key(this, "◀", "Switch player"); append("     "); key(this, "Back", "Exit")
@@ -183,23 +172,22 @@ class MainActivity : AppCompatActivity() {
         val track = ColorStateList.valueOf(Color.argb(60, 255, 255, 255))
         heroProgress.progressBackgroundTintList = track; infoProgress.progressBackgroundTintList = track
 
-        // search button + compact top bar for small screens
-        val sbPill = GradientDrawable().apply { cornerRadius = 40 * dp; setColor(Color.TRANSPARENT) }
+        // search pill in the top bar
+        val sbPill = Ui.pill(dp, Accent.SURFACE)
         searchBtn.background = sbPill
         searchBtn.setOnFocusChangeListener { _, f ->
-            sbPill.setColor(if (f) Color.WHITE else Color.TRANSPARENT)
+            sbPill.setColor(if (f) Accent.TEXT else Accent.SURFACE)
             searchBtn.setTextColor(if (f) Accent.ABYSS else Accent.DIM)
             searchBtn.compoundDrawableTintList = ColorStateList.valueOf(if (f) Accent.ABYSS else Accent.DIM)
             styleSegs()
         }
         searchBtn.setOnClickListener { openSearch() }
-        fitTopBar()
 
         home = findViewById(R.id.home); homeFocusMode = home.descendantFocusability
         guide = findViewById(R.id.guide); guideScrim = findViewById(R.id.guideScrim); guideDivider = findViewById(R.id.guideDivider)
         catList = findViewById(R.id.catList); chList = findViewById(R.id.chList)
         chCol = findViewById(R.id.chCol); chHeader = findViewById(R.id.chHeader); channelSearch = findViewById(R.id.channelSearch)
-        guide.background = guideGlass
+        guide.background = Ui.pill(dp, 0xF21A1C21.toInt(), 22f)
         guide.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
         listOf(catList to catAdapter, chList to chAdapter).forEach { (rv, ad) ->
             rv.layoutManager = LinearLayoutManager(this); rv.adapter = ad; rv.itemAnimator = null
@@ -207,7 +195,7 @@ class MainActivity : AppCompatActivity() {
         }
         searchResults.layoutManager = LinearLayoutManager(this); searchResults.adapter = searchAdapter
         searchResults.itemAnimator = null; searchResults.overScrollMode = View.OVER_SCROLL_NEVER
-        searchQuery.background = GlassDrawable(dp, 16f).apply { base = Color.argb(34, 255, 255, 255) }
+        searchQuery.background = Ui.pill(dp, Accent.SURFACE, 14f)
         buildKeys(); renderQuery()
 
         favs = prefs.getStringSet("favs", emptySet())!!.toSet()
@@ -225,11 +213,6 @@ class MainActivity : AppCompatActivity() {
                 else if (ni != tab) segs[tab].post { if (segs[ni].isFocused) segs[tab].requestFocus() }   // focus fell onto the bar by accident
             }
         }
-        rowsView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                if (newState == RecyclerView.SCROLL_STATE_IDLE && tab != 2) aurora.resume() else aurora.pause()
-            }
-        })
         channelSearch.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -247,7 +230,6 @@ class MainActivity : AppCompatActivity() {
             tv.setOnClickListener { switchTab(i) }
             tv.setOnFocusChangeListener { _, _ -> styleSegs() }
         }
-        segLive.post { moveIndicator(false) }
         styleSegs(); fillHero(null); loadChannels()
 
         // Entrance: the AK ribbons unfold, then the mark flies through and the home screen rises in behind it.
@@ -271,70 +253,42 @@ class MainActivity : AppCompatActivity() {
     }
     private fun keyHint(k: String, label: String) = SpannableStringBuilder().also { key(it, k, label) }
 
-    private fun chip(text: CharSequence) = TextView(this).apply {
-        this.text = text; textSize = 13f; setTextColor(Accent.DIM); typeface = fRegular
-        setPadding((14 * dp).toInt(), (7 * dp).toInt(), (14 * dp).toInt(), (7 * dp).toInt())
-        background = GlassDrawable(dp)
+    /** Hero button: [primary] is the white pill (Watch / Details), the rest are soft grey pills. */
+    private fun chip(text: CharSequence, primary: Boolean = false) = TextView(this).apply {
+        this.text = text; textSize = 13f; typeface = fSemi
+        setTextColor(if (primary) Accent.ABYSS else Accent.TEXT)
+        setPadding((18 * dp).toInt(), (9 * dp).toInt(), (18 * dp).toInt(), (9 * dp).toInt())
+        background = Ui.pill(dp, if (primary) Accent.TEXT else 0xCC2B2D33.toInt())
         layoutParams = LinearLayout.LayoutParams(-2, -2).apply { marginEnd = (10 * dp).toInt() }
     }
 
-    /** The side rail is icon-only until it gets focus, so it fits every screen; just drop the logo word on very short screens. */
-    private fun fitTopBar() {
-        if (resources.configuration.screenHeightDp < 400) findViewById<View>(R.id.akText).visibility = View.GONE
+    /** Sizes the hero from the real screen: media top-right, text bottom-left, rows below. */
+    private fun layoutHero() {
+        val dm = resources.displayMetrics
+        val w = dm.widthPixels; val h = dm.heightPixels
+        val bar = ((if (compact) 56 else 72) * dp).toInt()
+        val mediaH = (h * 0.58f).toInt()
+        findViewById<View>(R.id.topBar).layoutParams.height = bar
+        findViewById<View>(R.id.heroMedia).layoutParams.apply { width = (w * 0.70f).toInt(); height = mediaH }
+        findViewById<View>(R.id.heroArea).layoutParams.height = (mediaH - bar).coerceAtLeast((120 * dp).toInt())
+        heroText.layoutParams.width = (w * 0.46f).toInt()
+        heroDesc.maxLines = if (compact) 1 else 2
+        heroTitle.textSize = if (compact) 28f else 36f
     }
 
     private fun styleSegs() {
-        val segFocused = segs.any { it.isFocused }
-        segPill.setColor(if (segFocused) Color.WHITE else Color.argb(40, 255, 255, 255))
         segs.forEachIndexed { i, tv ->
-            val c = when { tv.isFocused -> Accent.ABYSS; tab == i -> Accent.TEXT; else -> Accent.DIM }
-            tv.setTextColor(c); tv.compoundDrawableTintList = ColorStateList.valueOf(c)
-        }
-        // evaluated after the focus change settles, so moving between rail items never collapses and re-opens it
-        ui.removeCallbacks(railCheck); ui.post(railCheck)
-    }
-    private fun indicatorW() = ((56 + (204 - 56) * railF) * dp).toInt()
-    /** Opens the rail while any of its items has focus, and closes it when focus moves into the content. */
-    private fun applyRail() {
-        val want = if (searchBtn.isFocused || segs.any { it.isFocused }) 1f else 0f
-        if (want == railTarget) return
-        railTarget = want
-        railAnim?.cancel()
-        railAnim = ValueAnimator.ofFloat(railF, want).apply {
-            duration = 260; interpolator = DecelerateInterpolator(2f)
-            addUpdateListener {
-                railF = it.animatedValue as Float
-                val rl = rail.layoutParams; rl.width = ((84 + (232 - 84) * railF) * dp).toInt(); rail.layoutParams = rl
-                railScrim.alpha = railF
-                val il = segIndicator.layoutParams; il.width = indicatorW(); segIndicator.layoutParams = il
-            }
-            start()
-        }
-    }
-    /** The selected-tab pill slides up and down the rail. */
-    private fun moveIndicator(animate: Boolean) {
-        val target = segs[tab]
-        if (target.height == 0) { target.post { moveIndicator(false) }; return }
-        val lp = segIndicator.layoutParams
-        val y0 = segIndicator.translationY; val h0 = lp.height
-        val y1 = target.top.toFloat(); val h1 = target.height
-        segIndicator.translationX = target.left.toFloat()
-        lp.width = indicatorW()
-        if (!animate || h0 <= 0 || h0 != h1) { segIndicator.translationY = y1; lp.height = h1; segIndicator.layoutParams = lp; return }
-        segIndicator.layoutParams = lp
-        ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 300; interpolator = DecelerateInterpolator(2f)
-            addUpdateListener { segIndicator.translationY = y0 + (y1 - y0) * (it.animatedValue as Float) }
-            start()
+            val f = tv.isFocused
+            segBgs[i].setColor(when { f -> Accent.TEXT; tab == i -> 0xFF3C4043.toInt(); else -> Color.TRANSPARENT })
+            tv.setTextColor(when { f -> Accent.ABYSS; tab == i -> Accent.TEXT; else -> Accent.DIM })
         }
     }
 
-    private fun focusAnim(x: View, f: Boolean, color: Int) {
-        x.outlineAmbientShadowColor = color; x.outlineSpotShadowColor = color
-        val s = if (f) 1.06f else 1f
+    /** Focused card grows a little; the white ring comes from the view's own foreground state. No shadows, no glow. */
+    private fun focusAnim(x: View, f: Boolean, color: Int = 0) {
+        val s = if (f) 1.08f else 1f
         x.animate().cancel()
-        x.animate().setStartDelay(0).scaleX(s).scaleY(s).translationZ(if (f) 24 * dp else 0f)
-            .setDuration(240).setInterpolator(DecelerateInterpolator(2f)).start()
+        x.animate().setStartDelay(0).scaleX(s).scaleY(s).setDuration(150).setInterpolator(DecelerateInterpolator(1.6f)).start()
     }
     /**
      * Rows without focus step back so the active row reads first. Only the row's title steps back:
@@ -583,7 +537,7 @@ class MainActivity : AppCompatActivity() {
     private fun switchTab(t: Int) {
         if (t == tab) return
         val dir = if (t > tab) 1 else -1
-        tab = t; styleSegs(); moveIndicator(true); stopPreview()
+        tab = t; styleSegs(); stopPreview()
         val shift = 28 * dp * dir
         rowsView.animate().cancel()
         rowsView.animate().alpha(0f).translationY(-shift).setDuration(150).withEndAction {
@@ -609,33 +563,31 @@ class MainActivity : AppCompatActivity() {
             fillHero(t); heroText.translationX = 16 * dp
             heroText.animate().alpha(1f).translationX(0f).setDuration(300).setInterpolator(DecelerateInterpolator(2f)).start()
         }.start()
-        heroOrb.scaleX = 0.94f; heroOrb.scaleY = 0.94f
-        heroOrb.animate().scaleX(1f).scaleY(1f).setDuration(420).setInterpolator(OvershootInterpolator(1.2f)).start()
     }
+    /** Tints the still hero panel (shown until the live preview is ready) with the channel's colour. */
     private fun glowHero(c: Int, partner: Int) {
-        aurora.setPalette(c, partner); orbGlass.accent = c
-        heroOrb.outlineAmbientShadowColor = c; heroOrb.outlineSpotShadowColor = c
+        orbBg.colors = intArrayOf(Ui.mix(Accent.ABYSS, c, 0.42f), Ui.mix(Accent.ABYSS, partner, 0.12f))
         heroProgress.progressTintList = ColorStateList.valueOf(c)
     }
     private fun showBackdrop(url: String?) {
-        if (url.isNullOrEmpty()) { heroBackdrop.animate().alpha(0f).setDuration(350).start(); heroOrb.animate().alpha(1f).setDuration(250).start(); return }
+        if (url.isNullOrEmpty()) { heroBackdrop.animate().alpha(0f).setDuration(300).start(); heroOrb.animate().alpha(1f).setDuration(250).start(); return }
         heroOrb.animate().alpha(0f).setDuration(200).start()
         heroBackdrop.load(url) {
             crossfade(180)
-            listener(onSuccess = { _, _ -> if ((heroTile as? Tile.Mv)?.m?.background == url) heroBackdrop.animate().alpha(0.9f).setDuration(260).start() })
+            listener(onSuccess = { _, _ -> if ((heroTile as? Tile.Mv)?.m?.background == url) heroBackdrop.animate().alpha(1f).setDuration(260).start() })
         }
     }
     private fun fillHero(t: Tile?) {
         heroChips.removeAllViews()
-        if (t !is Tile.Mv) { showBackdrop(null); if (layer.visibility != View.VISIBLE) aurora.resume() }
+        if (t !is Tile.Mv) showBackdrop(null)
         schedulePreview((t as? Tile.Ch)?.c)
         when (t) {
             is Tile.Ch -> {
                 heroDot.visibility = View.VISIBLE; heroDot.backgroundTintList = ColorStateList.valueOf(Accent.LIVE)
-                heroBadge.text = if (t.c.v2) "24/7 live" else "Live now"; heroTitle.text = t.c.name
-                heroChips.addView(chip(if (t.c.v2) "V2 · ${t.c.category}" else t.c.category))
-                heroChips.addView(chip(keyHint("OK", "Watch")))
-                heroChips.addView(chip(keyHint("Hold OK", if (t.c.key in favs) "Remove from favorites" else "Add to favorites")))
+                heroBadge.text = "LIVE   ·   " + (if (t.c.v2) "24/7   ·   " else "") + t.c.category
+                heroTitle.text = t.c.name
+                heroChips.addView(chip("▶   Watch", true))
+                heroChips.addView(chip(keyHint("Hold OK", if (t.c.key in favs) "Remove from favourites" else "Add to favourites")))
                 if (t.c.logo.isBlank()) {
                     heroLogo.visibility = View.GONE; heroMono.visibility = View.VISIBLE
                     heroMono.text = initials(t.c.name); heroMono.textSize = if (heroMono.text.length > 1) 62f else 84f
@@ -654,17 +606,19 @@ class MainActivity : AppCompatActivity() {
             }
             is Tile.Mv -> {
                 val red = 0xFFE50914.toInt()
-                heroDot.visibility = View.VISIBLE; heroDot.backgroundTintList = ColorStateList.valueOf(red)
-                heroBadge.text = if (t.m.isSeries) "Series" else "Movie"; heroTitle.text = t.m.name
-                if (t.m.rating.isNotEmpty()) heroChips.addView(chip("★ ${t.m.rating}"))
-                if (t.m.year.isNotEmpty()) heroChips.addView(chip(t.m.year))
-                if (t.m.genres.isNotEmpty()) heroChips.addView(chip(t.m.genres.take(2).joinToString(" · ")))
-                heroChips.addView(chip(keyHint("OK", "Details")))
+                heroDot.visibility = View.GONE
+                heroTitle.text = t.m.name
+                heroBadge.text = listOfNotNull(
+                    if (t.m.isSeries) "Series" else "Movie",
+                    t.m.year.ifEmpty { null },
+                    if (t.m.rating.isNotEmpty()) "★ ${t.m.rating}" else null,
+                    t.m.genres.take(2).joinToString(" · ").ifEmpty { null }
+                ).joinToString("   ·   ")
+                heroChips.addView(chip("▶   Details", true))
                 heroProg.visibility = View.GONE; heroProgress.visibility = View.GONE; heroNext.visibility = View.GONE
                 heroDesc.text = t.m.description; heroDesc.visibility = if (t.m.description.isEmpty()) View.GONE else View.VISIBLE
                 ui.removeCallbacks(heroGuideRunnable)
                 glowHero(red, 0xFF5A0A12.toInt()); showBackdrop(t.m.background.ifEmpty { t.m.poster })
-                aurora.pause()
             }
             else -> {
                 heroDot.visibility = View.GONE; heroBadge.text = ""; heroTitle.text = "AK TV"
@@ -719,7 +673,7 @@ class MainActivity : AppCompatActivity() {
         if (n != null) { heroProg.text = progLine("NOW", n); heroProgress.progress = (Epg.progress(n) * 1000).toInt() }
         val d = n?.desc.orEmpty()
         heroDesc.text = d; heroDesc.visibility = if (d.isEmpty()) View.GONE else View.VISIBLE
-        heroNext.visibility = if (nx != null) View.VISIBLE else View.GONE
+        heroNext.visibility = if (nx != null && !compact) View.VISIBLE else View.GONE
         if (nx != null) heroNext.text = progLine("NEXT", nx, range = false)
     }
 
@@ -741,7 +695,6 @@ class MainActivity : AppCompatActivity() {
         infoCat.text = "${if (ch.v2) "V2 · 24/7" else ch.category}   ${current + 1} of ${shown.size}"
         bindLogo(infoLogo, infoMono, ch)
         val ac = accentOf(ch.key)
-        infoGlass.accent = ac; guideGlass.accent = ac
         spinner.indeterminateTintList = ColorStateList.valueOf(ac)
         infoProgress.progressTintList = ColorStateList.valueOf(ac)
         infoNow.visibility = View.GONE; infoProgress.visibility = View.GONE; infoDesc.visibility = View.GONE; infoNext.visibility = View.GONE
@@ -835,7 +788,7 @@ class MainActivity : AppCompatActivity() {
         val ch = shown[current]
         stopPreview(); rememberChannel(ch)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); layer.keepScreenOn = true
-        if (layer.visibility != View.VISIBLE) { aurora.pause(); layer.alpha = 0f; layer.visibility = View.VISIBLE; layer.animate().alpha(1f).setDuration(250).start() }
+        if (layer.visibility != View.VISIBLE) { layer.animate().cancel(); layer.alpha = 1f; layer.visibility = View.VISIBLE }
         attempts = 0; refreshed = false; lastCode = null; serverIdx = 0; stalls = 0
         playMsg(null); bindInfo(ch)
         if (wantsTg(ch)) startEmbed(ch) else resolveAndStart(ch)
@@ -1022,9 +975,9 @@ class MainActivity : AppCompatActivity() {
             .setTargetBufferBytes(96 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(true).build()
         val ts = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(this).apply {
             setParameters(buildUponParameters()
-                .setViewportSizeToPhysicalDisplaySize(this@MainActivity, true)   // never pick more than the TV can show
-                .setExceedVideoConstraintsIfNecessary(false)
-                .setExceedRendererCapabilitiesIfNecessary(false))               // skip HD tracks the decoder can't keep up with
+                .setViewportSizeToPhysicalDisplaySize(this@MainActivity, true)   // prefer what the screen can show...
+                .setExceedVideoConstraintsIfNecessary(true)                      // ...but if every track is bigger, still play the smallest
+                .setExceedRendererCapabilitiesIfNecessary(true))                 // (false here left audio playing over a black picture)
         }
         val bw = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this).setInitialBitrateEstimate(8_000_000L).build()
         val p = ExoPlayer.Builder(this, rf).setLoadControl(lc).setTrackSelector(ts).setBandwidthMeter(bw).build()
@@ -1041,12 +994,25 @@ class MainActivity : AppCompatActivity() {
                 Player.STATE_READY -> {
                     spinner.visibility = View.GONE; playMsg(null); disarmStall()
                     retries = 0; attempts = 0; refreshed = false; rememberRoute()
+                    ui.removeCallbacks(videoCheck); ui.postDelayed(videoCheck, 6000)
                 }
                 Player.STATE_BUFFERING -> { spinner.visibility = View.VISIBLE; armStall(15000) }
                 Player.STATE_ENDED -> onStall()
             }
         }
+        override fun onRenderedFirstFrame() { ui.removeCallbacks(videoCheck); stalls = 0 }
         override fun onPlayerError(e: PlaybackException) { disarmStall(); onStreamError(e) }
+    }
+
+    /** Sound but no picture 6 s after "ready" (decoder refused the video, wrong surface...): move on instead of sitting on black. */
+    private val videoCheck = Runnable {
+        val p = player ?: return@Runnable
+        val ch = shown.getOrNull(current) ?: return@Runnable
+        if (layer.visibility != View.VISIBLE || p.playbackState != Player.STATE_READY) return@Runnable
+        if (p.videoSize.width == 0 && p.currentTracks.containsType(C.TRACK_TYPE_VIDEO)) {
+            playMsg("No picture, trying another source…")
+            if (ch.v2) nextServer() else nextSource(ch, "no picture")
+        }
     }
 
     // A stream that stops answering is moved on automatically: next route / server, then a fresh link, then a clear message.
@@ -1134,13 +1100,13 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
     }
 
-    private fun releasePlayer() { pv.player = null; player?.release(); player = null; releaseEmbed() }
+    private fun releasePlayer() { ui.removeCallbacks(videoCheck); pv.player = null; player?.release(); player = null; releaseEmbed() }
     private fun closePlayer() {
         playToken++; disarmStall(); playMsg(null)
-        releasePlayer(); retries = 0; ui.removeCallbacks(hideInfo); aurora.resume(); resetGuide()
+        releasePlayer(); retries = 0; ui.removeCallbacks(hideInfo); resetGuide()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); layer.keepScreenOn = false
         if (tab != 2) { val sel = heroTile; refreshRowsKeepFocus(); setHero(sel, immediate = true) }
-        if (layer.visibility == View.VISIBLE) layer.animate().alpha(0f).setDuration(200).withEndAction { layer.visibility = View.GONE }.start()
+        layer.animate().cancel(); layer.visibility = View.GONE
     }
 
     private fun shortOk() {
@@ -1191,27 +1157,30 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        // Going left out of the rows always lands on the current tab in the side rail, never switches tabs by accident.
-        if (layer.visibility != View.VISIBLE && e.action == KeyEvent.ACTION_DOWN && e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+        // Up from the first row goes to the open tab in the top bar (Google TV behaviour).
+        if (layer.visibility != View.VISIBLE && e.action == KeyEvent.ACTION_DOWN && e.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
             val f = currentFocus
             if (f != null && isInside(f, rowsView)) {
-                val next = FocusFinder.getInstance().findNextFocus(window.decorView as ViewGroup, f, View.FOCUS_LEFT)
-                if (next != null && (next === searchBtn || segs.any { it === next })) { segs[tab].requestFocus(); return true }
+                val pos = rowsView.findContainingItemView(f)?.let { rowsView.getChildAdapterPosition(it) } ?: -1
+                if (pos == 0) { segs[tab].requestFocus(); return true }
             }
         }
         if (layer.visibility != View.VISIBLE && e.action == KeyEvent.ACTION_DOWN) {
             val f = currentFocus
-            val inRail = f != null && (f === searchBtn || segs.any { it === f })
-            if (inRail && e.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                // back to the tile you came from
-                val back = lastRowsFocus
-                if (back != null && back.isAttachedToWindow && isInside(back, rowsView) && back.requestFocus()) return true
-                if (rowsView.requestFocus()) return true
-            }
-            if (f != null && inRail && (e.keyCode == KeyEvent.KEYCODE_DPAD_UP || e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN)) {
-                val dir = if (e.keyCode == KeyEvent.KEYCODE_DPAD_UP) View.FOCUS_UP else View.FOCUS_DOWN
-                val next = FocusFinder.getInstance().findNextFocus(window.decorView as ViewGroup, f, dir)
-                if (next == null || !(next === searchBtn || segs.any { it === next })) return true   // stay inside the rail
+            val inBar = f != null && (f === searchBtn || segs.any { it === f })
+            if (f != null && inBar) when (e.keyCode) {
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    // back to the card you came from
+                    val back = lastRowsFocus
+                    if (back != null && back.isAttachedToWindow && isInside(back, rowsView) && back.requestFocus()) return true
+                    rowsView.requestFocus(); return true
+                }
+                KeyEvent.KEYCODE_DPAD_UP -> return true
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    val dir = if (e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) View.FOCUS_LEFT else View.FOCUS_RIGHT
+                    val next = FocusFinder.getInstance().findNextFocus(window.decorView as ViewGroup, f, dir)
+                    if (next == null || !(next === searchBtn || segs.any { it === next })) return true   // stay inside the bar
+                }
             }
         }
         return super.dispatchKeyEvent(e)
@@ -1219,11 +1188,10 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         if (tab == 2 && ::rowsView.isInitialized && rows.isNotEmpty()) refreshRowsKeepFocus()
-        if (layer.visibility != View.VISIBLE) aurora.resume()
         if (all.isNotEmpty() && System.currentTimeMillis() - lastRefresh > 15 * 60_000L) loadChannels()
     }
     override fun onStop() {
-        super.onStop(); stopPreview(); window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); playToken++; disarmStall(); releasePlayer(); layer.visibility = View.GONE; aurora.pause(); resetGuide()
+        super.onStop(); stopPreview(); window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); playToken++; disarmStall(); releasePlayer(); layer.visibility = View.GONE; resetGuide()
         if (searchShown) hideSearch(false)
     }
 
@@ -1245,10 +1213,9 @@ class MainActivity : AppCompatActivity() {
     private fun keyView(label: String, w: Int, h: Int, m: Int, onClick: () -> Unit) = TextView(this).apply {
         text = label; gravity = Gravity.CENTER; textSize = 15f; typeface = fSemi; setTextColor(Accent.DIM)
         isFocusable = true; isClickable = true
-        val g = GlassDrawable(dp, 12f).apply { base = Color.argb(26, 255, 255, 255) }
-        background = g
+        background = Ui.focusBg(dp, 12f, rest = Accent.SURFACE)
         layoutParams = LinearLayout.LayoutParams(w, h).apply { setMargins(m, m, m, m) }
-        setOnFocusChangeListener { v, f -> g.focused = f; setTextColor(if (f) Accent.TEXT else Accent.DIM); focusAnim(v, f, Accent.SIGNAL) }
+        setOnFocusChangeListener { v, f -> setTextColor(if (f) Accent.ABYSS else Accent.DIM); focusAnim(v, f) }
         setOnClickListener { onClick() }
     }
     private fun typeChar(c: Char) { if (searchBuf.length < 40) { searchBuf.append(c); renderQuery(); updateResults() } }
@@ -1363,12 +1330,12 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = results.size
         override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
             val v = LayoutInflater.from(p.context).inflate(R.layout.item_guide_ch, p, false)
-            v.background = GlassDrawable(dp, 14f).apply { idleVisible = false }
-            v.findViewById<View>(R.id.chLogoBox).background = GlassDrawable(dp, 12f)
+            v.background = Ui.focusBg(dp, 14f)
+            v.findViewById<View>(R.id.chLogoBox).background = Ui.pill(dp, Accent.SURFACE, 12f)
             return VH(v)
         }
         override fun onBindViewHolder(h: VH, i: Int) {
-            val v = h.itemView; val ch = results[i]; val glass = v.background as GlassDrawable
+            val v = h.itemView; val ch = results[i]
             val name = v.findViewById<TextView>(R.id.chName)
             name.text = ch.name
             v.findViewById<TextView>(R.id.chNum).text = (i + 1).toString()
@@ -1376,9 +1343,8 @@ class MainActivity : AppCompatActivity() {
             val sub = v.findViewById<TextView>(R.id.chNow)
             sub.text = if (ch.v2) "V2 · 24/7" else ch.category; sub.setTextColor(Accent.FAINT); sub.visibility = View.VISIBLE
             v.findViewById<View>(R.id.chFav).visibility = if (ch.key in favs) View.VISIBLE else View.GONE
-            glass.accent = accentOf(ch.key); glass.snap(v.isFocused)
-            val style = { f: Boolean -> glass.focused = f; name.setTextColor(if (f) Accent.TEXT else Accent.DIM) }
-            name.setTextColor(if (v.isFocused) Accent.TEXT else Accent.DIM)
+            val style = { f: Boolean -> name.setTextColor(if (f) Accent.ABYSS else Accent.DIM); sub.setTextColor(if (f) 0xFF5F6368.toInt() else Accent.FAINT) }
+            style(v.isFocused)
             v.setOnFocusChangeListener { _, f -> style(f) }
             v.setOnClickListener { playFromSearch(i) }
             v.setOnLongClickListener { toggleFav(ch); notifyItemChanged(i); true }
@@ -1518,20 +1484,18 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = guideCats.size
         override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
             val v = LayoutInflater.from(p.context).inflate(R.layout.item_guide_cat, p, false)
-            v.background = GlassDrawable(dp, 14f).apply { idleVisible = false }
+            v.background = Ui.focusBg(dp, 14f)
             return VH(v)
         }
         override fun onBindViewHolder(h: VH, i: Int) {
-            val v = h.itemView; val cat = guideCats[i]; val glass = v.background as GlassDrawable
+            val v = h.itemView; val cat = guideCats[i]
             val name = v.findViewById<TextView>(R.id.catName)
             name.text = cat
             v.findViewById<TextView>(R.id.catCount).text = (catCounts[cat] ?: 0).toString()
             v.findViewById<View>(R.id.catMark).visibility = if (cat == shownCat) View.VISIBLE else View.INVISIBLE
             val open = cat == guideCat
-            val style = { f: Boolean ->
-                glass.focused = f; glass.idleVisible = open
-                name.setTextColor(if (f || open) Accent.TEXT else Accent.DIM)
-            }
+            v.isActivated = open
+            val style = { f: Boolean -> name.setTextColor(if (f) Accent.ABYSS else if (open) Accent.TEXT else Accent.DIM) }
             style(v.isFocused)
             v.setOnFocusChangeListener { _, f -> style(f) }
             v.setOnClickListener { openCategory(i) }
@@ -1542,12 +1506,12 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = guideChannels.size
         override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
             val v = LayoutInflater.from(p.context).inflate(R.layout.item_guide_ch, p, false)
-            v.background = GlassDrawable(dp, 14f).apply { idleVisible = false }
-            v.findViewById<View>(R.id.chLogoBox).background = GlassDrawable(dp, 12f)
+            v.background = Ui.focusBg(dp, 14f)
+            v.findViewById<View>(R.id.chLogoBox).background = Ui.pill(dp, Accent.SURFACE, 12f)
             return VH(v)
         }
         override fun onBindViewHolder(h: VH, i: Int) {
-            val v = h.itemView; val ch = guideChannels[i]; val glass = v.background as GlassDrawable
+            val v = h.itemView; val ch = guideChannels[i]
             val name = v.findViewById<TextView>(R.id.chName)
             name.text = ch.name
             v.findViewById<TextView>(R.id.chNum).text = (i + 1).toString()
@@ -1555,11 +1519,8 @@ class MainActivity : AppCompatActivity() {
             val playing = shown.getOrNull(current)?.key == ch.key
             v.findViewById<View>(R.id.chNow).visibility = if (playing) View.VISIBLE else View.GONE
             v.findViewById<View>(R.id.chFav).visibility = if (ch.key in favs) View.VISIBLE else View.GONE
-            glass.accent = accentOf(ch.key)
-            val style = { f: Boolean ->
-                glass.focused = f; glass.idleVisible = playing
-                name.setTextColor(if (f || playing) Accent.TEXT else Accent.DIM)
-            }
+            v.isActivated = playing
+            val style = { f: Boolean -> name.setTextColor(if (f) Accent.ABYSS else if (playing) Accent.TEXT else Accent.DIM) }
             style(v.isFocused)
             v.setOnFocusChangeListener { _, f -> style(f) }
             v.setOnClickListener { playFromGuide(i) }
@@ -1571,13 +1532,14 @@ class MainActivity : AppCompatActivity() {
     private val previewRunnable = Runnable { startPreview() }
     private fun schedulePreview(c: Channel?) {
         stopPreview()
-        if (c != null && tab != 2 && layer.visibility != View.VISIBLE && prefs.getBoolean("previews", true)) ui.postDelayed(previewRunnable, 1600)
+        if (c != null && tab != 2 && layer.visibility != View.VISIBLE && prefs.getBoolean("previews", true)) ui.postDelayed(previewRunnable, 1200)
     }
     private fun stopPreview() {
         ui.removeCallbacks(previewRunnable); previewToken++
+        previewPv.player = null
         previewPlayer?.let { try { it.release() } catch (_: Exception) {} }; previewPlayer = null
-        if (heroPreview.visibility == View.VISIBLE) heroPreview.animate().alpha(0f).setDuration(200).withEndAction { heroPreview.visibility = View.GONE }.start()
-        if (heroTile !is Tile.Mv) heroOrb.animate().alpha(1f).setDuration(200).start()
+        // never GONE: a TextureView only gets its surface while laid out, and the first frame is what fades it in
+        heroPreview.animate().cancel(); if (heroPreview.alpha > 0f) heroPreview.animate().alpha(0f).setDuration(200).start()
     }
     private fun startPreview() {
         val c = (heroTile as? Tile.Ch)?.c ?: return
@@ -1612,18 +1574,20 @@ class MainActivity : AppCompatActivity() {
                 f.setDrmSessionManagerProvider { mgr }
             }
             val p = ExoPlayer.Builder(this).build()
-            p.volume = 0f; p.setVideoTextureView(previewTex)
+            p.volume = 0f
+            // a preview never needs more than 720p: lighter on the decoder and the network
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setMaxVideoSize(1280, 720).build()
             p.setMediaSource(f.createMediaSource(MediaItem.Builder().setUri(url).setLiveConfiguration(liveCfg()).build()))
             p.addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(s: Int) {
-                    if (s == Player.STATE_READY && previewPlayer === p) {
-                        heroPreview.visibility = View.VISIBLE; heroPreview.scaleX = 0.92f; heroPreview.scaleY = 0.92f
-                        heroPreview.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(380).setInterpolator(DecelerateInterpolator(2f)).start()
-                        heroOrb.animate().alpha(0f).setDuration(250).start()
-                    }
+                // fade in only when a real picture exists, so a preview can never show as a black box
+                override fun onRenderedFirstFrame() {
+                    if (previewPlayer !== p) return
+                    heroPreview.animate().cancel()
+                    heroPreview.animate().alpha(1f).setDuration(450).start()
                 }
                 override fun onPlayerError(e: PlaybackException) { if (previewPlayer === p) stopPreview() }
             })
+            previewPv.player = p
             previewPlayer = p; p.playWhenReady = true; p.prepare()
         } catch (_: Exception) { stopPreview() }
     }
@@ -1652,8 +1616,8 @@ class MainActivity : AppCompatActivity() {
         override fun onCreateViewHolder(p: ViewGroup, t: Int): VH {
             val l = when (t) { 0 -> R.layout.item_tile; 1 -> R.layout.item_poster; else -> R.layout.item_hint }
             val v = LayoutInflater.from(p.context).inflate(l, p, false)
-            if (t != 1) v.background = GlassDrawable(dp, 20f)
-            else { v.background = GradientDrawable().apply { cornerRadius = 14 * dp; setColor(Color.argb(28, 255, 255, 255)) }; v.clipToOutline = true }
+            v.background = Ui.pill(dp, Accent.SURFACE, if (t == 1) 10f else 12f)
+            v.clipToOutline = true
             return VH(v)
         }
         override fun onBindViewHolder(h: VH, i: Int, payloads: MutableList<Any>) {
@@ -1665,8 +1629,8 @@ class MainActivity : AppCompatActivity() {
             val v = h.itemView
             when (val t = row.tiles[i]) {
                 is Tile.Ch -> {
-                    val glass = v.background as GlassDrawable
-                    v.tag = t.c.key; glass.accent = accentOf(t.c.key); glass.snap(v.isFocused)
+                    val bg = v.background as GradientDrawable
+                    v.tag = t.c.key; bg.setColor(Ui.mix(Accent.SURFACE, accentOf(t.c.key), 0.26f))
                     v.findViewById<TextView>(R.id.name).text = t.c.name
                     val logo = v.findViewById<ImageView>(R.id.logo); val mono = v.findViewById<TextView>(R.id.mono)
                     if (t.c.logo.isBlank()) {
@@ -1680,15 +1644,14 @@ class MainActivity : AppCompatActivity() {
                             allowHardware(false)
                             listener(onSuccess = { _, r ->
                                 extractAccent(t.c.key, r.drawable) { c ->
-                                    if (v.tag == t.c.key) { glass.accent = c; if (v.isFocused) focusAnim(v, true, c) }
+                                    if (v.tag == t.c.key) bg.setColor(Ui.mix(Accent.SURFACE, c, 0.26f))
                                 }
                             })
                         }
                     }
                     v.findViewById<View>(R.id.fav).visibility = if (t.c.key in favs) View.VISIBLE else View.GONE
                     v.setOnFocusChangeListener { x, f ->
-                        val c = accentOf(t.c.key); glass.accent = c; glass.focused = f
-                        focusAnim(x, f, c); if (f) setHero(t)
+                        focusAnim(x, f); if (f) setHero(t)
                     }
                     v.setOnClickListener {
                         shown = row.tiles.filterIsInstance<Tile.Ch>().map { it.c }; shownCat = row.title
@@ -1703,7 +1666,7 @@ class MainActivity : AppCompatActivity() {
                     val rt = v.findViewById<TextView>(R.id.posterRating)
                     rt.text = if (t.m.rating.isNotEmpty()) "★ ${t.m.rating}" else ""; rt.visibility = if (t.m.rating.isEmpty()) View.GONE else View.VISIBLE
                     v.setOnFocusChangeListener { x, f ->
-                        focusAnim(x, f, 0xFFE50914.toInt())
+                        focusAnim(x, f)
                         if (f) {
                             setHero(t)
                             val p = h.bindingAdapterPosition
@@ -1731,7 +1694,7 @@ class MainActivity : AppCompatActivity() {
             val title = v.findViewById<TextView>(R.id.rowTitle); val count = v.findViewById<TextView>(R.id.rowCount)
             title.text = row.title
             val n = row.tiles.count { it is Tile.Ch || it is Tile.Mv }
-            count.text = if (n > 0) n.toString() else ""
+            count.text = ""
             val rv = v.findViewById<RecyclerView>(R.id.rowList)
             if (rv.layoutManager == null) {
                 rv.layoutManager = SnapLayoutManager(this@MainActivity, RecyclerView.HORIZONTAL)

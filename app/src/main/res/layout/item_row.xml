@@ -2,14 +2,15 @@
     android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
     android:clipChildren="false" android:clipToPadding="false">
     <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:layout_marginStart="6dp" android:layout_marginTop="6dp" android:orientation="horizontal"
+        android:layout_marginStart="48dp" android:layout_marginTop="4dp" android:orientation="horizontal"
         android:baselineAligned="true">
         <TextView android:id="@+id/rowTitle" android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:textColor="@color/text" android:textSize="17sp" android:fontFamily="@font/sora_semibold"/>
+            android:textColor="@color/text" android:textSize="16sp" android:fontFamily="@font/sora_semibold"/>
         <TextView android:id="@+id/rowCount" android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:layout_marginStart="10dp" android:textColor="@color/text_faint" android:textSize="13sp"/>
+            android:layout_marginStart="10dp" android:textColor="@color/text_faint" android:textSize="12sp"
+            android:visibility="gone"/>
     </LinearLayout>
     <androidx.recyclerview.widget.RecyclerView android:id="@+id/rowList" android:layout_width="match_parent"
         android:layout_height="wrap_content" android:clipChildren="false" android:clipToPadding="false"
-        android:paddingTop="14dp" android:paddingBottom="22dp" android:paddingStart="4dp" android:paddingEnd="160dp"/>
+        android:paddingTop="8dp" android:paddingBottom="14dp" android:paddingStart="40dp" android:paddingEnd="160dp"/>
 </LinearLayout>
