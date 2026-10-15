@@ -1,0 +1,19 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="216dp" android:layout_height="128dp" android:layout_margin="9dp"
+    android:focusable="true" android:clickable="true">
+    <View android:layout_width="6dp" android:layout_height="6dp" android:layout_margin="13dp"
+        android:background="@drawable/dot" android:backgroundTint="@color/live"/>
+    <TextView android:id="@+id/fav" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="top|end" android:layout_margin="9dp" android:text="♥" android:textColor="@color/live"
+        android:textSize="15sp" android:visibility="gone"/>
+    <ImageView android:id="@+id/logo" android:layout_width="58dp" android:layout_height="58dp"
+        android:layout_gravity="top|center_horizontal" android:layout_marginTop="18dp" android:scaleType="fitCenter"/>
+    <TextView android:id="@+id/mono" android:layout_width="58dp" android:layout_height="58dp"
+        android:layout_gravity="top|center_horizontal" android:layout_marginTop="18dp" android:gravity="center"
+        android:textColor="#FFFFFF" android:textSize="20sp" android:fontFamily="@font/sora_bold"
+        android:includeFontPadding="false" android:visibility="gone"/>
+    <TextView android:id="@+id/name" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_gravity="bottom" android:layout_marginBottom="13dp" android:paddingStart="12dp" android:paddingEnd="12dp"
+        android:gravity="center" android:maxLines="1" android:ellipsize="end" android:textColor="@color/text"
+        android:textSize="13sp"/>
+</FrameLayout>

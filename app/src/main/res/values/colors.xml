@@ -1,0 +1,10 @@
+<resources>
+    <color name="abyss">#05060D</color>
+    <color name="night">#0D0E24</color>
+    <color name="signal">#3D8BFF</color>
+    <color name="ion">#7FE7FF</color>
+    <color name="live">#FF375F</color>
+    <color name="text">#F4F6FF</color>
+    <color name="text_dim">#9AA0C3</color>
+    <color name="text_faint">#5F6590</color>
+</resources>
