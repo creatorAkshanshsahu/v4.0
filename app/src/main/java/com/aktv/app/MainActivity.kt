@@ -910,7 +910,7 @@ class MainActivity : AppCompatActivity() {
 
     // smoother live playback: a deeper buffer, a calmer live offset and gentle catch-up speed instead of stalls
     private fun liveCfg() = MediaItem.LiveConfiguration.Builder().setTargetOffsetMs(12000)
-        .setMinOffsetMs(6000).setMaxOffsetMs(40000).setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.03f).build()
+        .setMinOffsetMs(6000).setMaxOffsetMs(40000).setMinPlaybackSpeed(1f).setMaxPlaybackSpeed(1f).build()   // speed nudging made HD sports judder
 
     private fun startV1() {
         if (routeIdx !in routes.indices) return
@@ -996,9 +996,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun attach(ms: MediaSource) {
         releasePlayer()
+        stopPreview()
         val rf = DefaultRenderersFactory(this).setEnableDecoderFallback(true)
-        val lc = DefaultLoadControl.Builder().setBufferDurationsMs(20000, 60000, 2500, 5000).build()
-        val p = ExoPlayer.Builder(this, rf).setLoadControl(lc).build()
+            .forceEnableMediaCodecAsynchronousQueueing()   // smoother 1080p / 50fps decoding on TV boxes
+        val lc = DefaultLoadControl.Builder().setBufferDurationsMs(25000, 60000, 3000, 6000)
+            .setTargetBufferBytes(96 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(true).build()
+        val ts = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(this).apply {
+            setParameters(buildUponParameters()
+                .setViewportSizeToPhysicalDisplaySize(this@MainActivity, true)   // never pick more than the TV can show
+                .setExceedVideoConstraintsIfNecessary(false)
+                .setExceedRendererCapabilitiesIfNecessary(false))               // skip HD tracks the decoder can't keep up with
+        }
+        val bw = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this).setInitialBitrateEstimate(8_000_000L).build()
+        val p = ExoPlayer.Builder(this, rf).setLoadControl(lc).setTrackSelector(ts).setBandwidthMeter(bw).build()
+        p.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT)
         p.setMediaSource(ms); p.playWhenReady = true; p.addListener(playerListener)
         pv.player = p; player = p; p.prepare()
         armStall(18000)
