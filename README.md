@@ -1,3 +1,5 @@
+4.2
+https://drive.google.com/file/d/1DWf2zcp4NxZhr1UDiGwGQ1uH4iKy53gA/view?usp=sharing
 4.1 32
 https://drive.google.com/file/d/1NadKb78X92mp4plx-ffzu6vPUu0Tweyj/view?usp=sharing
 4.0 arm32
